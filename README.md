@@ -143,7 +143,7 @@ Contributions are welcome! Feel free to:
 
 ## 👤 Author
 
-**[Rishi](https://github.com/RishiIRL)**
+**[RishiIRL](https://github.com/RishiIRL)**
 
 ---
 
