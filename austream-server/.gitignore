@@ -1,0 +1,40 @@
+# Kotlin/Gradle Desktop .gitignore
+
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Kotlin
+*.class
+*.jar
+*.war
+*.ear
+
+# OS generated files
+.DS_Store
+.DS_Store?
+Thumbs.db
+
+# Logs
+*.log
+
+# Package files
+packaging/output/
+*.msi
+*.exe
+*.dmg
+*.deb
+*.rpm
+
+# Runtime data
+*.hprof
+hs_err_pid*

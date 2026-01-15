@@ -1,0 +1,86 @@
+# AuStream Project - Root .gitignore
+
+# ===================
+# Build outputs
+# ===================
+build/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+
+# ===================
+# IDE and Editor
+# ===================
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ===================
+# Gradle
+# ===================
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+
+# ===================
+# OS generated
+# ===================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===================
+# Python virtual env
+# ===================
+.venv/
+venv/
+ENV/
+env/
+*.pyc
+__pycache__/
+
+# ===================
+# Tools (local only)
+# ===================
+tools/
+
+# ===================
+# Local properties
+# ===================
+local.properties
+*.local
+
+# ===================
+# Logs and crash dumps
+# ===================
+*.log
+*.hprof
+hs_err_pid*
+replay_pid*
+
+# ===================
+# Secrets & Credentials
+# ===================
+*.keystore
+*.jks
+!debug.keystore
+google-services.json
+credentials.json
+secrets.properties
