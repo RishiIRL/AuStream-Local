@@ -12,7 +12,9 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 sealed class Screen(val route: String) {
-    object Discovery : Screen("discovery")
+    object Discovery : Screen("discovery?disconnected={disconnected}") {
+        fun createRoute(disconnected: Boolean = false) = "discovery?disconnected=$disconnected"
+    }
     object Playback : Screen("playback/{serverAddress}/{serverName}?pin={pin}") {
         fun createRoute(address: String, name: String, pin: String = ""): String {
             val encodedAddress = URLEncoder.encode(address, "UTF-8")
@@ -31,8 +33,18 @@ fun AppNavigation() {
         navController = navController,
         startDestination = Screen.Discovery.route
     ) {
-        composable(Screen.Discovery.route) {
+        composable(
+            route = Screen.Discovery.route,
+            arguments = listOf(
+                navArgument("disconnected") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
+        ) { backStackEntry ->
+            val showDisconnected = backStackEntry.arguments?.getBoolean("disconnected") ?: false
             DiscoveryScreen(
+                showDisconnectedMessage = showDisconnected,
                 onServerSelected = { address, name, pin ->
                     navController.navigate(Screen.Playback.createRoute(address, name, pin))
                 }
@@ -67,7 +79,15 @@ fun AppNavigation() {
                 serverAddress = serverAddress,
                 serverName = serverName,
                 prefilledPin = pin,
-                onBack = { navController.popBackStack() }
+                onBack = { disconnected ->
+                    if (disconnected) {
+                        navController.navigate(Screen.Discovery.createRoute(true)) {
+                            popUpTo(Screen.Discovery.route) { inclusive = true }
+                        }
+                    } else {
+                        navController.popBackStack()
+                    }
+                }
             )
         }
     }

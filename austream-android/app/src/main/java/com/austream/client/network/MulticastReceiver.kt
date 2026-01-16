@@ -1,6 +1,5 @@
 package com.austream.client.network
 
-import android.util.Log
 import com.austream.client.security.SecurityManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -39,6 +38,7 @@ sealed class AuthState {
     object NotAuthenticated : AuthState()
     object Authenticating : AuthState()
     object Authenticated : AuthState()
+    object Disconnected : AuthState()  // Server stopped
     data class Failed(val reason: String) : AuthState()
 }
 
@@ -63,10 +63,19 @@ class MulticastReceiver(
     private val _packetFlow = MutableSharedFlow<ReceivedPacket>(extraBufferCapacity = 100)
     val packetFlow: SharedFlow<ReceivedPacket> = _packetFlow
     
+    // Buffer size received from server (default 50ms if not specified)
+    private val _bufferSizeMs = MutableStateFlow(50)
+    val bufferSizeMs: StateFlow<Int> = _bufferSizeMs
+    
     private val packetsReceived = AtomicLong(0)
     private val packetsLost = AtomicLong(0)
     private val decryptionErrors = AtomicLong(0)
     private var lastSequenceNumber = -1L
+    
+    // Track last packet time for disconnect detection
+    @Volatile
+    private var lastPacketTime = 0L
+    private var disconnectJob: Job? = null
     
     companion object {
         private const val TAG = "SecureAudioReceiver"
@@ -107,7 +116,10 @@ class MulticastReceiver(
                 val response = String(responsePacket.data, 0, responsePacket.length)
                 
                 when {
-                    response == "AUSTREAM_OK" -> {
+                    response.startsWith("AUSTREAM_OK") -> {
+                        // Parse buffer size from response: "AUSTREAM_OK:<bufferMs>"
+                        val bufferMs = response.substringAfter(":", "50").toIntOrNull() ?: 50
+                        _bufferSizeMs.value = bufferMs
                         _authState.value = AuthState.Authenticated
                         startReceiving(scope, serverInetAddr)
                     }
@@ -121,7 +133,6 @@ class MulticastReceiver(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Authentication error", e)
                 _authState.value = AuthState.Failed("Connection error: ${e.message}")
                 stop()
             }
@@ -146,6 +157,20 @@ class MulticastReceiver(
             }
         }
         
+        // Disconnect detection - if no packets for 5 seconds, server likely stopped
+        lastPacketTime = System.currentTimeMillis()
+        disconnectJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isRunning) {
+                delay(1000)
+                val timeSinceLastPacket = System.currentTimeMillis() - lastPacketTime
+                if (timeSinceLastPacket > 5000 && _authState.value == AuthState.Authenticated) {
+                    _authState.value = AuthState.Disconnected
+                    stop()
+                    break
+                }
+            }
+        }
+        
         // Receive encrypted audio packets
         receiveJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(MAX_PACKET_SIZE)
@@ -160,6 +185,7 @@ class MulticastReceiver(
                         if (receivedPacket != null) {
                             _packetFlow.emit(receivedPacket)
                             packetsReceived.incrementAndGet()
+                            lastPacketTime = System.currentTimeMillis()  // Update for disconnect detection
                             
                             // Track packet loss
                             if (lastSequenceNumber >= 0 && receivedPacket.sequenceNumber > lastSequenceNumber + 1) {
@@ -171,10 +197,8 @@ class MulticastReceiver(
                     }
                 } catch (e: java.net.SocketTimeoutException) {
                     // Normal timeout, continue
-                } catch (e: Exception) {
-                    if (isRunning) {
-                        Log.e(TAG, "Receive error", e)
-                    }
+                } catch (_: Exception) {
+                    // Receive error - continue if still running
                 }
             }
         }
@@ -217,6 +241,8 @@ class MulticastReceiver(
      */
     fun stop() {
         isRunning = false
+        disconnectJob?.cancel()
+        disconnectJob = null
         receiveJob?.cancel()
         receiveJob = null
         heartbeatJob?.cancel()
@@ -225,7 +251,10 @@ class MulticastReceiver(
         socket = null
         lastSequenceNumber = -1
         securityManager.reset()
-        _authState.value = AuthState.NotAuthenticated
+        // Don't overwrite Disconnected state
+        if (_authState.value != AuthState.Disconnected) {
+            _authState.value = AuthState.NotAuthenticated
+        }
     }
     
     fun getPacketsReceived(): Long = packetsReceived.get()

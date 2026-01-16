@@ -19,6 +19,7 @@ import com.austream.client.network.AuthState
 import com.austream.client.network.ClockSyncClient
 import com.austream.client.network.MulticastReceiver
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -39,6 +40,9 @@ class AudioStreamService : Service() {
     private var serverName: String = ""
     private var pin: String = ""
     private var isStreaming = false
+    
+    // Local auth state that persists after receiver is stopped
+    private val _authState = MutableStateFlow<AuthState>(AuthState.NotAuthenticated)
     
     companion object {
         private const val TAG = "AudioStreamService"
@@ -111,13 +115,18 @@ class AudioStreamService : Service() {
         // Monitor authentication state
         serviceScope.launch {
             multicastReceiver?.authState?.collect { state ->
+                // Update local state FIRST so UI can react
+                _authState.value = state
+                
                 when (state) {
                     AuthState.Authenticated -> {
                         updateNotification("Streaming from $serverName")
                         
                         // Start audio player only after authentication
                         if (audioPlayer == null) {
-                            audioPlayer = AudioPlayer(clockSyncClient!!).apply {
+                            // Get buffer size from server (sent during auth)
+                            val bufferMs = multicastReceiver?.bufferSizeMs?.value ?: 50
+                            audioPlayer = AudioPlayer(clockSyncClient!!, bufferMs).apply {
                                 start(serviceScope, multicastReceiver!!.packetFlow)
                             }
                         }
@@ -128,6 +137,10 @@ class AudioStreamService : Service() {
                     }
                     AuthState.Authenticating -> {
                         updateNotification("Authenticating...")
+                    }
+                    AuthState.Disconnected -> {
+                        updateNotification("Server disconnected")
+                        // stopStreaming will be called after UI navigates
                     }
                     AuthState.NotAuthenticated -> {}
                 }
@@ -210,9 +223,10 @@ class AudioStreamService : Service() {
     fun getPacketsReceived(): Long = multicastReceiver?.getPacketsReceived() ?: 0
     fun getPacketsLost(): Long = multicastReceiver?.getPacketsLost() ?: 0
     fun getLatencyMs(): Long = (clockSyncClient?.roundTripTime ?: 0) / 1_000_000
+    fun getBufferSizeMs(): Int = multicastReceiver?.bufferSizeMs?.value ?: 50
     fun isStreaming(): Boolean = isStreaming
-    fun isAuthenticated(): Boolean = multicastReceiver?.isAuthenticated() ?: false
-    fun getAuthState(): StateFlow<AuthState>? = multicastReceiver?.authState
+    fun isAuthenticated(): Boolean = _authState.value == AuthState.Authenticated
+    fun getAuthState(): StateFlow<AuthState> = _authState  // Return local state that persists
     
     override fun onDestroy() {
         stopStreaming()

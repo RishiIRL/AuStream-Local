@@ -51,6 +51,8 @@ fun MainScreen() {
     var qrCodeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var qrBitmapForUi by remember { mutableStateOf<ImageBitmap?>(null) }
     var connectedClients by remember { mutableStateOf(0) }
+    var bufferSizeMs by remember { mutableStateOf(150f) }  // Default 150ms buffer (Stable)
+    var showSettings by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     
     // Load available apps on startup
@@ -152,18 +154,42 @@ fun MainScreen() {
                         .padding(top = topPadding, bottom = topPadding),
                     verticalArrangement = Arrangement.spacedBy(sectionSpacing)
                 ) {
-                // Header
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "AuStream",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Stream audio to your devices",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                // Header with settings icon
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "AuStream",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Stream audio to your devices",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    
+                    // Settings icon (only visible when not streaming)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !serverState.isStreaming,
+                        enter = androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.fadeOut()
+                    ) {
+                        IconButton(
+                            onClick = { showSettings = true },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 // Main content that flexes to window
@@ -213,15 +239,19 @@ fun MainScreen() {
                                     Text(
                                         text = if (serverState.isStreaming) "Streaming" else "Ready to stream",
                                         style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = if (serverState.isStreaming)
                                             "IP: ${NetworkUtils.getLocalIpv4Address()}"
                                         else
-                                            "Select an app to stream and press Start",
+                                            "Select an app and press Start",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
 
@@ -323,10 +353,12 @@ fun MainScreen() {
                                 }
 
                                 Text(
-                                    text = "Open AuStream on your phone and scan this QR code\nor connect manually using the IP + PIN.",
+                                    text = "Scan with AuStream app or connect manually using IP + PIN",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -450,6 +482,7 @@ fun MainScreen() {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Refresh applications")
                                 }
+
                             }
                         }
                     }
@@ -471,6 +504,7 @@ fun MainScreen() {
                                     // NOTE: These can throw (e.g. ports already in use). Catch so the EXE doesn't just exit.
                                     clockSyncServer.start(scope)
                                     audioCaptureManager.startCapture(scope, serverState.selectedApp)
+                                    multicastServer.bufferSizeMs = bufferSizeMs.toInt()  // Apply user-selected buffer
                                     multicastServer.start(scope, audioCaptureManager.audioFlow, opusEncoder)
                                     serverState = serverState.copy(isStreaming = true)
                                 }
@@ -526,5 +560,177 @@ fun MainScreen() {
                 }
             }
         }
+    }
+    
+    // Settings Dialog
+    var showBufferInfo by remember { mutableStateOf(false) }
+    
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Buffer Size Section
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Sync Buffer",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            IconButton(
+                                onClick = { showBufferInfo = !showBufferInfo },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Buffer info",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = if (showBufferInfo) MaterialTheme.colorScheme.primary 
+                                           else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        
+                        // Info tooltip
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = showBufferInfo,
+                            enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+                            exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut()
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "The sync buffer controls how much audio is queued before playback. " +
+                                           "A larger buffer prevents stuttering on unstable networks but adds delay. " +
+                                           "A smaller buffer reduces latency but may cause audio glitches if packets arrive late.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
+                        }
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${bufferSizeMs.toInt()}ms",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = when (bufferSizeMs.toInt()) {
+                                    50 -> "Low latency"
+                                    100 -> "Balanced"
+                                    150 -> "Stable"
+                                    200 -> "Maximum stability"
+                                    else -> ""
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        Slider(
+                            value = bufferSizeMs,
+                            onValueChange = { bufferSizeMs = it },
+                            valueRange = 50f..200f,
+                            steps = 2,  // Creates stops at 50, 100, 150, 200
+                            modifier = Modifier.height(32.dp),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            thumb = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            },
+                            track = { _ ->
+                                val fraction = (bufferSizeMs - 50f) / (200f - 50f)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(12.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    // Active track
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(fraction)
+                                            .height(12.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                    // Stop point markers (at 0%, 33%, 66%, 100%)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 3.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        listOf(0f, 0.333f, 0.666f, 1f).forEach { position ->
+                                            val isActive = fraction >= position
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        if (isActive) Color.White.copy(alpha = 0.7f)
+                                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSettings = false }) {
+                    Text("Done")
+                }
+            }
+        )
     }
 }

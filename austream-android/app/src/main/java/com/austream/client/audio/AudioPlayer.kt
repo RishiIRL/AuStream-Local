@@ -3,7 +3,6 @@ package com.austream.client.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.util.Log
 import com.austream.client.network.ClockSyncClient
 import com.austream.client.network.ReceivedPacket
 import kotlinx.coroutines.*
@@ -22,7 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
  * - Adaptive underrun recovery
  */
 class AudioPlayer(
-    private val clockSyncClient: ClockSyncClient
+    private val clockSyncClient: ClockSyncClient,
+    private val bufferSizeMs: Int = 50  // Configurable sync buffer from server
 ) {
     private var audioTrack: AudioTrack? = null
     private var playbackJob: Job? = null
@@ -45,19 +45,14 @@ class AudioPlayer(
         private const val TAG = "AudioPlayer"
         const val SAMPLE_RATE = 48000
         const val CHANNELS = 2
-        const val BUFFER_SIZE_FRAMES = 1200  // 25ms buffer
-        
-        // Sync delay: how far ahead of "now" we schedule packets
-        // Lower = less latency but more risk of stuttering
-        // 50ms is a good balance for WiFi networks
-        const val SYNC_DELAY_MS = 50L
-        
-        const val MAX_BUFFER_SIZE = 30
+        const val BUFFER_SIZE_FRAMES = 2400  // 50ms buffer (increased for stability)
+        const val MAX_BUFFER_SIZE = 50  // Support up to 500ms of buffered packets
         const val FRAME_DURATION_NS = 10_000_000L  // 10ms per frame in nanoseconds
     }
     
     /**
      * Initialize the AudioTrack for low-latency playback.
+     * Uses the custom buffer size from server.
      */
     private fun initialize() {
         val minBufferSize = AudioTrack.getMinBufferSize(
@@ -66,7 +61,10 @@ class AudioPlayer(
             AudioFormat.ENCODING_PCM_16BIT
         )
         
-        val bufferSize = maxOf(minBufferSize, BUFFER_SIZE_FRAMES * CHANNELS * 2)
+        // Size AudioTrack buffer based on server-provided buffer size
+        // bufferSizeMs * 48 samples/ms * 2 channels * 2 bytes per sample
+        val customBufferBytes = bufferSizeMs * 48 * 2 * 2
+        val bufferSize = maxOf(minBufferSize, customBufferBytes)
         
         audioTrack = AudioTrack.Builder()
             .setAudioAttributes(
@@ -112,13 +110,10 @@ class AudioPlayer(
         collectionJob = scope.launch(Dispatchers.IO) {
             packetFlow.collect { packet ->
                 if (isPlaying.get()) {
-                    // Convert server timestamp to local time for synchronized playback
-                    val localPlayTime = clockSyncClient.serverToLocalTime(packet.timestamp)
-                    
                     // Initialize reference point on first packet
                     if (firstPacketServerTime == 0L) {
                         firstPacketServerTime = packet.timestamp
-                        playbackStartLocalTime = System.nanoTime() + (SYNC_DELAY_MS * 1_000_000)
+                        playbackStartLocalTime = System.nanoTime() + (bufferSizeMs * 1_000_000L)
                     }
                     
                     // Schedule based on offset from first packet
@@ -137,10 +132,18 @@ class AudioPlayer(
         
         // Playback job - play packets at their scheduled times
         playbackJob = scope.launch(Dispatchers.IO) {
-            // Wait for initial buffer to fill
-            delay(SYNC_DELAY_MS)
+            // Wait for buffer to fill before starting playback
+            // This prevents initial artifacts by ensuring we have enough packets AND time has passed
+            val minPacketsToStart = (bufferSizeMs / 10).coerceAtLeast(5)  // 10ms per packet
             
-            var lastPlayedSeq = -1L
+            // Wait for packets AND wait for the full buffer time
+            var initialWait = 0L
+            val targetWaitMs = bufferSizeMs.toLong()  // Wait exactly the buffer time
+            while ((syncBuffer.size < minPacketsToStart || initialWait < targetWaitMs) && initialWait < 3000L && isPlaying.get()) {
+                delay(20)
+                initialWait += 20
+            }
+            
             var consecutiveUnderruns = 0
             
             while (isActive && isPlaying.get()) {
@@ -152,34 +155,25 @@ class AudioPlayer(
                     val packet = entry.value
                     
                     when {
-                        // Time to play this packet
+                        // Time to play this packet (on time or late)
                         now >= scheduledTime -> {
                             syncBuffer.pollFirstEntry()
                             consecutiveUnderruns = 0
                             
-                            // Handle packet loss with PLC
-                            if (lastPlayedSeq >= 0 && packet.sequenceNumber > lastPlayedSeq + 1) {
-                                val missing = (packet.sequenceNumber - lastPlayedSeq - 1).toInt()
-                                repeat(minOf(missing, 3)) {
-                                    writeToTrack(decoder.generatePLC())
-                                }
-                            }
-                            
-                            // Decode and play
+                            // Just decode and play - don't skip or generate silence
                             try {
                                 val samples = decoder.decode(packet.opusData)
                                 writeToTrack(samples)
-                                lastPlayedSeq = packet.sequenceNumber
                                 packetsPlayed.incrementAndGet()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Decode error", e)
+                            } catch (_: Exception) {
+                                // Decode error - skip packet
                             }
                         }
                         
-                        // Packet is in the future - wait briefly
+                        // Packet is in the future - wait
                         else -> {
                             val waitTime = (scheduledTime - now) / 1_000_000  // ns to ms
-                            delay(minOf(waitTime, 5L).coerceAtLeast(1L))
+                            delay(minOf(waitTime, 10L).coerceAtLeast(1L))
                         }
                     }
                 } else {
@@ -187,18 +181,28 @@ class AudioPlayer(
                     consecutiveUnderruns++
                     
                     when {
-                        consecutiveUnderruns < 5 -> delay(2)
-                        consecutiveUnderruns < 20 -> {
-                            writeToTrack(decoder.generatePLC())
-                            delay(5)
-                        }
+                        consecutiveUnderruns < 10 -> delay(2)
+                        consecutiveUnderruns < 30 -> delay(5)  // Just wait, no PLC
                         else -> {
-                            delay(10)
-                            if (consecutiveUnderruns > 50) {
-                                // Reset sync reference on extended underrun
-                                firstPacketServerTime = 0L
-                                delay(SYNC_DELAY_MS / 2)
-                                consecutiveUnderruns = 20
+                            // Extended gap - audio likely paused on PC
+                            // Reset sync and wait for buffer to refill
+                            if (consecutiveUnderruns >= 30) {
+                                firstPacketServerTime = 0L  // Reset sync reference
+                                
+                                // Wait for packets to arrive (audio resumed on PC)
+                                val minPacketsToResume = (bufferSizeMs / 10).coerceAtLeast(5)
+                                var resumeWait = 0L
+                                while (syncBuffer.size < minPacketsToResume && resumeWait < 5000L && isPlaying.get()) {
+                                    delay(20)
+                                    resumeWait += 20
+                                }
+                                // Also wait a bit more to let buffer fill with time
+                                if (syncBuffer.size >= minPacketsToResume) {
+                                    delay(bufferSizeMs.toLong())
+                                }
+                                consecutiveUnderruns = 0
+                            } else {
+                                delay(10)
                             }
                         }
                     }

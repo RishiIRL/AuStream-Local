@@ -35,15 +35,19 @@ data class ConnectedClientInfo(
  */
 class MulticastServer(
     private val port: Int = 5004,
-    private val securityManager: SecurityManager = SecurityManager()
+    private val securityManager: SecurityManager = SecurityManager(),
+    var bufferSizeMs: Int = 50  // Configurable sync buffer for clients
 ) {
     private var socket: DatagramSocket? = null
     private var streamingJob: Job? = null
     private var registrationJob: Job? = null
+    private var keepaliveJob: Job? = null
     private var isRunning = false
     private var scope: CoroutineScope? = null
     
     private val sequenceNumber = AtomicLong(0)
+    @Volatile
+    private var lastPacketSentTime = 0L
     
     // Track connected clients - each with their own send channel
     private val clients = ConcurrentHashMap<String, ConnectedClientInfo>()
@@ -105,6 +109,7 @@ class MulticastServer(
                     
                     val encodedData = encoder.encode(pcmData)
                     val packetData = buildEncryptedPacket(encodedData)
+                    lastPacketSentTime = System.currentTimeMillis()
                     
                     // Send to each authenticated client's channel (non-blocking)
                     clients.values
@@ -114,6 +119,32 @@ class MulticastServer(
                         }
                 } catch (e: Exception) {
                     e.printStackTrace()
+                }
+            }
+        }
+        
+        // Keepalive job - send empty packets when no audio is playing
+        keepaliveJob = coroutineScope.launch(Dispatchers.IO) {
+            lastPacketSentTime = System.currentTimeMillis()
+            while (isActive && isRunning) {
+                kotlinx.coroutines.delay(2000)  // Check every 2 seconds
+                val timeSinceLastPacket = System.currentTimeMillis() - lastPacketSentTime
+                if (timeSinceLastPacket > 2000 && clients.values.any { it.authenticated }) {
+                    // Send keepalive packet (silence encoded)
+                    try {
+                        val silenceData = ByteArray(960 * 2 * 2)  // 10ms of silence (stereo 16-bit)
+                        val encodedSilence = encoder.encode(silenceData)
+                        val packetData = buildEncryptedPacket(encodedSilence)
+                        lastPacketSentTime = System.currentTimeMillis()
+                        
+                        clients.values
+                            .filter { it.authenticated }
+                            .forEach { client ->
+                                client.sendChannel.trySend(packetData)
+                            }
+                    } catch (e: Exception) {
+                        // Ignore encoding errors for silence
+                    }
                 }
             }
         }
@@ -142,8 +173,8 @@ class MulticastServer(
                     clientInfo.sendJob = startClientSendJob(clientInfo, coroutineScope)
                     clients[clientKey] = clientInfo
                     
-                    // Send success response
-                    val response = "AUSTREAM_OK".toByteArray()
+                    // Send success response with buffer size
+                    val response = "AUSTREAM_OK:$bufferSizeMs".toByteArray()
                     val responsePacket = DatagramPacket(response, response.size, clientAddr.address, clientAddr.port)
                     socket?.send(responsePacket)
                     
@@ -255,6 +286,8 @@ class MulticastServer(
         streamingJob = null
         registrationJob?.cancel()
         registrationJob = null
+        keepaliveJob?.cancel()
+        keepaliveJob = null
         socket?.close()
         socket = null
         sequenceNumber.set(0)

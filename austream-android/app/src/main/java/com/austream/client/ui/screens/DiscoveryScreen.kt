@@ -59,6 +59,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -98,6 +99,7 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiscoveryScreen(
+    showDisconnectedMessage: Boolean = false,
     onServerSelected: (address: String, name: String, pin: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -106,6 +108,16 @@ fun DiscoveryScreen(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val dimens = rememberDimensions()
+    
+    // Show disconnect message if navigated back due to server stopping
+    LaunchedEffect(showDisconnectedMessage) {
+        if (showDisconnectedMessage) {
+            snackbarHostState.showSnackbar(
+                message = "Connection to server was lost",
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
     
     // Load recent connections from SharedPreferences
     val recentConnections = remember { mutableStateListOf<ConnectionData>() }

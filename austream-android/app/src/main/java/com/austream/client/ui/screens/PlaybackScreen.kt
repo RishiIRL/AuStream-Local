@@ -53,7 +53,7 @@ fun PlaybackScreen(
     serverAddress: String,
     serverName: String,
     prefilledPin: String = "",
-    onBack: () -> Unit
+    onBack: (disconnected: Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
@@ -88,9 +88,10 @@ fun PlaybackScreen(
     // State
     var isPlaying by remember { mutableStateOf(false) }
     var volume by remember { mutableStateOf(1f) }
-    var packetsReceived by remember { mutableStateOf(0L) }
-    var latencyMs by remember { mutableStateOf(0L) }
+    var bufferSizeMs by remember { mutableStateOf(50) }
+    var networkLatencyMs by remember { mutableStateOf(0L) }
     var packetsLost by remember { mutableStateOf(0L) }
+    var packetsReceived by remember { mutableStateOf(0L) }
     
     // Notification permission launcher (Android 13+)
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -144,13 +145,9 @@ fun PlaybackScreen(
     }
     
     // Monitor auth state from service.
-    // Note: the service can be bound before it has created the MulticastReceiver, so getAuthState() may
-    // return null initially; we watch for it to become non-null and then collect.
     LaunchedEffect(service) {
-        snapshotFlow { service?.getAuthState() }
-            .filterNotNull()
-            .flatMapLatest { it }
-            .collect { state ->
+        service?.let { svc ->
+            svc.getAuthState().collect { state ->
                 authState = state
                 when (state) {
                     is AuthState.Failed -> {
@@ -176,9 +173,14 @@ fun PlaybackScreen(
                     AuthState.Authenticating -> {
                         isConnecting = true
                     }
+                    AuthState.Disconnected -> {
+                        // Server stopped - navigate back with flag
+                        onBack(true)
+                    }
                     else -> Unit
                 }
             }
+        }
     }
 
     // Safety: if the service never responds (e.g., bind succeeded but no network response), stop spinning.
@@ -203,13 +205,15 @@ fun PlaybackScreen(
                 isPlaying = streaming
 
                 if (streaming) {
-                    packetsReceived = it.getPacketsReceived()
-                    latencyMs = it.getLatencyMs()
+                    bufferSizeMs = it.getBufferSizeMs()
+                    networkLatencyMs = it.getLatencyMs()
                     packetsLost = it.getPacketsLost()
+                    packetsReceived = it.getPacketsReceived()
                 } else {
-                    packetsReceived = 0L
-                    latencyMs = 0L
+                    bufferSizeMs = 50
+                    networkLatencyMs = 0L
                     packetsLost = 0L
+                    packetsReceived = 0L
                 }
             }
         }
@@ -229,7 +233,7 @@ fun PlaybackScreen(
         AlertDialog(
             onDismissRequest = { 
                 if (authState !is AuthState.Authenticating) {
-                    onBack()
+                    onBack(false)
                 }
             },
             icon = {
@@ -327,7 +331,7 @@ fun PlaybackScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = onBack) {
+                TextButton(onClick = { onBack(false) }) {
                     Text("Cancel")
                 }
             }
@@ -452,6 +456,7 @@ fun PlaybackScreen(
                         AuthState.Authenticated -> if (isPlaying) "Streaming securely" else "Connected"
                         AuthState.Authenticating -> "Authenticating..."
                         is AuthState.Failed -> "Authentication failed"
+                        AuthState.Disconnected -> "Server disconnected"
                         AuthState.NotAuthenticated -> "Not connected"
                     },
                     style = MaterialTheme.typography.headlineSmall,
@@ -576,9 +581,17 @@ fun PlaybackScreen(
                                 .padding(20.dp),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            StatItem(label = "Packets", value = packetsReceived.toString())
-                            StatItem(label = "Latency", value = "${latencyMs}ms")
-                            StatItem(label = "Lost", value = packetsLost.toString())
+                            StatItem(label = "Buffer", value = "${bufferSizeMs}ms")
+                            StatItem(label = "Latency", value = "${networkLatencyMs + bufferSizeMs}ms")
+                            // Show connection quality based on packet loss
+                            val quality = when {
+                                packetsReceived == 0L -> "--"
+                                packetsLost == 0L -> "Excellent"
+                                packetsLost * 100 / (packetsReceived + packetsLost) < 1 -> "Good"
+                                packetsLost * 100 / (packetsReceived + packetsLost) < 5 -> "Fair"
+                                else -> "Poor"
+                            }
+                            StatItem(label = "Quality", value = quality)
                         }
                     }
                 }
@@ -663,7 +676,7 @@ fun PlaybackScreen(
                             }
                             context.startService(stopIntent)
                             showDisconnectConfirm = false
-                            onBack()
+                            onBack(false)
                         },
                         modifier = Modifier
                             .height(48.dp)
