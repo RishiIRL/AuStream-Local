@@ -109,9 +109,11 @@ fun DiscoveryScreen(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val dimens = rememberDimensions()
     
-    // Show disconnect message if navigated back due to server stopping
-    LaunchedEffect(showDisconnectedMessage) {
-        if (showDisconnectedMessage) {
+    // Show disconnect message if navigated back due to server stopping (only once)
+    var disconnectedMessageShown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (showDisconnectedMessage && !disconnectedMessageShown) {
+            disconnectedMessageShown = true
             snackbarHostState.showSnackbar(
                 message = "Connection to server was lost",
                 duration = SnackbarDuration.Long

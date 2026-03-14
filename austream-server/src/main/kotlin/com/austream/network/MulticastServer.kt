@@ -178,6 +178,9 @@ class MulticastServer(
                     val responsePacket = DatagramPacket(response, response.size, clientAddr.address, clientAddr.port)
                     socket?.send(responsePacket)
                     
+                    // Send immediate keepalive to prevent false disconnect
+                    lastPacketSentTime = System.currentTimeMillis()
+                    
                     AppLog.info("Client authenticated: $clientKey")
                 } else {
                     // Authentication failed

@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.austream"
-version = "1.0.0"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -49,7 +49,7 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb
             )
             packageName = "AuStream Server"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             
             windows {
                 menuGroup = "AuStream"

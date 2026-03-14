@@ -46,6 +46,10 @@ fun AppNavigation() {
             DiscoveryScreen(
                 showDisconnectedMessage = showDisconnected,
                 onServerSelected = { address, name, pin ->
+                    // Replace discovery with clean state, then navigate to playback
+                    navController.navigate(Screen.Discovery.createRoute(false)) {
+                        popUpTo(Screen.Discovery.route) { inclusive = true }
+                    }
                     navController.navigate(Screen.Playback.createRoute(address, name, pin))
                 }
             )

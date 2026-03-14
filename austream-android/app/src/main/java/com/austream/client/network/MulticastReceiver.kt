@@ -157,13 +157,14 @@ class MulticastReceiver(
             }
         }
         
-        // Disconnect detection - if no packets for 5 seconds, server likely stopped
+        // Disconnect detection - if no packets for 10 seconds, server likely stopped
+        // (Server sends keepalive every 2 seconds, so 10s allows for network hiccups)
         lastPacketTime = System.currentTimeMillis()
         disconnectJob = scope.launch(Dispatchers.IO) {
             while (isActive && isRunning) {
-                delay(1000)
+                delay(2000)  // Check every 2 seconds
                 val timeSinceLastPacket = System.currentTimeMillis() - lastPacketTime
-                if (timeSinceLastPacket > 5000 && _authState.value == AuthState.Authenticated) {
+                if (timeSinceLastPacket > 10000 && _authState.value == AuthState.Authenticated) {
                     _authState.value = AuthState.Disconnected
                     stop()
                     break

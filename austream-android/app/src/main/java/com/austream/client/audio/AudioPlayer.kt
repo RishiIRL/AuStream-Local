@@ -182,28 +182,22 @@ class AudioPlayer(
                     
                     when {
                         consecutiveUnderruns < 10 -> delay(2)
-                        consecutiveUnderruns < 30 -> delay(5)  // Just wait, no PLC
+                        consecutiveUnderruns < 50 -> delay(5)  // Just wait, no PLC
                         else -> {
                             // Extended gap - audio likely paused on PC
-                            // Reset sync and wait for buffer to refill
-                            if (consecutiveUnderruns >= 30) {
-                                firstPacketServerTime = 0L  // Reset sync reference
-                                
-                                // Wait for packets to arrive (audio resumed on PC)
-                                val minPacketsToResume = (bufferSizeMs / 10).coerceAtLeast(5)
-                                var resumeWait = 0L
-                                while (syncBuffer.size < minPacketsToResume && resumeWait < 5000L && isPlaying.get()) {
-                                    delay(20)
-                                    resumeWait += 20
-                                }
-                                // Also wait a bit more to let buffer fill with time
-                                if (syncBuffer.size >= minPacketsToResume) {
-                                    delay(bufferSizeMs.toLong())
-                                }
-                                consecutiveUnderruns = 0
-                            } else {
-                                delay(10)
+                            // Clear stale packets and reset sync
+                            syncBuffer.clear()
+                            firstPacketServerTime = 0L  // Reset sync reference
+                            playbackStartLocalTime = 0L
+                            
+                            // Wait for fresh packets to arrive
+                            val minPacketsToResume = (bufferSizeMs / 10).coerceAtLeast(3)
+                            var resumeWait = 0L
+                            while (syncBuffer.size < minPacketsToResume && resumeWait < 3000L && isPlaying.get()) {
+                                delay(50)
+                                resumeWait += 50
                             }
+                            consecutiveUnderruns = 0
                         }
                     }
                 }
