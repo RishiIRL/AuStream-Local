@@ -27,9 +27,8 @@ AuStream captures system audio from your Windows PC and streams it wirelessly to
 | 📱 **Multi-Device Sync** | Connect multiple Android devices, all playing in sync |
 | 🔐 **Secure Connection** | PIN-based authentication with AES-256-GCM encryption |
 | 📷 **QR Code Pairing** | Scan to connect instantly - no manual IP entry needed |
-| ⚡ **Configurable Buffer** | Adjustable sync buffer (50-200ms) for latency vs stability |
+| ⚡ **Low Latency** | Optimized for real-time audio with ~50ms sync buffer |
 | 🎚️ **Volume Control** | Independent volume control on each device |
-| 🔄 **Auto-Reconnect Detection** | Automatically detects server disconnection |
 
 ## 🔧 How It Works
 
@@ -125,7 +124,7 @@ austream/
 | **Encryption** | AES-256-GCM with per-packet IV |
 | **Authentication** | SHA-256 hashed PIN |
 | **Sync Protocol** | NTP-like 4-timestamp exchange |
-| **Sync Buffer** | Configurable 50-200ms (default 150ms) |
+| **Jitter Buffer** | 50ms adaptive with PLC |
 | **Sync Accuracy** | ~10-20ms between devices |
 
 ## 🖼️ Screenshots
@@ -144,7 +143,7 @@ Contributions are welcome! Feel free to:
 
 ## 👤 Author
 
-**[RishiIRL](https://github.com/RishiIRL)**
+**[Rishi](https://github.com/RishiIRL)**
 
 ---
 
